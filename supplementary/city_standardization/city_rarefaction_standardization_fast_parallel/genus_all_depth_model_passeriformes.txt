@@ -1,0 +1,47 @@
+
+Call:
+MASS::glm.nb(formula = Richness ~ City + splines::ns(log10_depth, 
+    df = 3), data = dat, control = glm.control(maxit = 100), 
+    init.theta = 2.267864806, link = log)
+
+Coefficients:
+                                  Estimate Std. Error z value Pr(>|z|)    
+(Intercept)                        0.42758    0.51817   0.825 0.409273    
+CityBeijing                       -0.10376    0.19381  -0.535 0.592395    
+CityChengdu, Sichuan              -0.31040    0.25885  -1.199 0.230464    
+CityChifeng, Inner Mongolia        0.93023    0.18505   5.027 4.98e-07 ***
+CityChongqing                      0.51349    0.20073   2.558 0.010524 *  
+CityGuangzhou, Guangdong           1.03963    0.18131   5.734 9.81e-09 ***
+CityHaikou, Hainan                 0.62904    0.18853   3.337 0.000848 ***
+CityHarbin, Heilongjiang           0.60400    0.18279   3.304 0.000952 ***
+CityNanjing, Jiangsu              -0.09174    0.17416  -0.527 0.598383    
+CityNyingchi, Tibet                0.62850    0.19908   3.157 0.001594 ** 
+CityShanghai                      -0.05436    0.24285  -0.224 0.822866    
+CityTai'an, Shandong               0.10512    0.18586   0.566 0.571674    
+CityÜrümqi, Xinjiang              0.63127    0.15789   3.998 6.38e-05 ***
+CityWuhan, Hubei                   0.22388    0.16903   1.324 0.185345    
+CityXi'an, Shaanxi                 0.72691    0.19037   3.818 0.000134 ***
+CityXianyang, Shaanxi             -0.32912    0.17120  -1.922 0.054547 .  
+CityXining, Qinghai                0.69874    0.28996   2.410 0.015963 *  
+CityYinchuan, Ningxia              0.79595    0.18706   4.255 2.09e-05 ***
+CityZhengzhou, Henan               0.87151    0.24170   3.606 0.000311 ***
+CityZhenjiang, Jiangsu             1.19916    0.16744   7.162 7.98e-13 ***
+splines::ns(log10_depth, df = 3)1  3.35732    0.28586  11.744  < 2e-16 ***
+splines::ns(log10_depth, df = 3)2  5.28567    1.01144   5.226 1.73e-07 ***
+splines::ns(log10_depth, df = 3)3  3.36095    0.26483  12.691  < 2e-16 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+(Dispersion parameter for Negative Binomial(2.2679) family taken to be 1)
+
+    Null deviance: 1571.95  on 545  degrees of freedom
+Residual deviance:  579.06  on 523  degrees of freedom
+AIC: 5193.1
+
+Number of Fisher Scoring iterations: 1
+
+
+              Theta:  2.268 
+          Std. Err.:  0.139 
+
+ 2 x log-likelihood:  -5145.121 

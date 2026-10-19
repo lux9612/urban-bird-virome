@@ -1,0 +1,15 @@
+"Item","N"
+"Samples in metadata",985
+"Samples in RPKM matrix",985
+"Samples in mapping_rate.tsv",985
+"Matched across all three files",985
+"Cities in full analysis",22
+"Cities in selected Host_order sensitivity analysis",21
+"Species All",52314
+"Species >=2 sequences",23442
+"Genus All after duplicate merge and unmatched-cluster removal",13701
+"Genus >=2 vOTUs",4710
+"Family All after duplicate merge and unmatched-cluster removal",4237
+"Family >=2 vOTUs",921
+"Duplicated genus representative rows merged",1
+"Duplicated family representative rows merged",1

@@ -1,0 +1,439 @@
+---
+title: "Figure 5"
+output:
+  html_document:
+    toc: true
+    code_folding: show
+params:
+  run_analysis: true
+---
+
+Run `rmarkdown::render("fig5/fig5.Rmd")` from the repository root.
+
+```{r setup, include=FALSE}
+figure_dir <- normalizePath(dirname(knitr::current_input(dir = TRUE)), winslash = "/")
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE,
+                      eval = params$run_analysis, error = FALSE)
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.5a_virus_host_overview"))
+```
+
+```{r figure-5}
+# Combined virus-host relationship analysis
+
+required_packages <- c(
+  "readxl",
+  "dplyr",
+  "tidyr",
+  "igraph",
+  "tidygraph",
+  "ggraph",
+  "ggrepel",
+  "ComplexHeatmap",
+  "circlize",
+  "RColorBrewer"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  stop(
+    paste0(
+      "Missing R packages: ",
+      paste(missing_packages, collapse = ", "),
+      "\nInstall them before running this script."
+    ),
+    call. = FALSE
+  )
+}
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(ggrepel)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+
+
+input_file <- "virus_host.xlsx"
+output_dir <- "figure5_results"
+
+if (!file.exists(input_file)) {
+  stop(
+    paste0("Input file not found: ", input_file),
+    call. = FALSE
+  )
+}
+
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+df <- read_excel(input_file)
+colnames(df) <- trimws(colnames(df))
+
+required_columns <- c(
+  "qseqid",
+  "pident",
+  "qcovhsp",
+  "Virus family",
+  "Virus genus",
+  "Host class",
+  "Host order",
+  "Host family",
+  "Host genus",
+  "Host Species"
+)
+
+missing_columns <- setdiff(required_columns, colnames(df))
+
+if (length(missing_columns) > 0) {
+  stop(
+    paste0(
+      "Missing required columns in ",
+      input_file,
+      ": ",
+      paste(missing_columns, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+
+network_data <- df %>%
+  select(
+    qseqid,
+    `Virus genus`,
+    `Host Species`,
+    `Host order`
+  ) %>%
+  rename(
+    virus = `Virus genus`,
+    host = `Host Species`,
+    order = `Host order`
+  ) %>%
+  filter(
+    !is.na(virus),
+    virus != "",
+    !is.na(host),
+    host != "",
+    !is.na(order),
+    order != ""
+  ) %>%
+  distinct(qseqid, virus, host, order)
+
+network_edges_virus_host <- network_data %>%
+  count(virus, host, name = "weight") %>%
+  rename(
+    from = virus,
+    to = host
+  )
+
+network_edges_host_order <- network_data %>%
+  distinct(host, order) %>%
+  rename(
+    from = host,
+    to = order
+  ) %>%
+  mutate(weight = 1)
+
+network_edges <- bind_rows(
+  network_edges_virus_host,
+  network_edges_host_order
+)
+
+network_virus_nodes <- network_data %>%
+  count(virus) %>%
+  transmute(
+    name = virus,
+    type = "Virus",
+    size = n
+  )
+
+network_host_nodes <- network_data %>%
+  count(host) %>%
+  transmute(
+    name = host,
+    type = "Host",
+    size = n
+  )
+
+network_order_nodes <- network_data %>%
+  distinct(order) %>%
+  transmute(
+    name = order,
+    type = "Order",
+    size = 18
+  )
+
+network_nodes <- bind_rows(
+  network_virus_nodes,
+  network_host_nodes,
+  network_order_nodes
+)
+
+network_nodes$type[network_nodes$name == "Homo sapiens"] <- "Human"
+
+network_graph <- graph_from_data_frame(
+  network_edges,
+  vertices = network_nodes,
+  directed = FALSE
+)
+
+network_tbl <- as_tbl_graph(network_graph) %>%
+  mutate(deg = centrality_degree())
+
+p_host_order <- ggraph(network_tbl, layout = "stress") +
+  geom_edge_link(
+    aes(width = weight),
+    colour = "grey75",
+    alpha = 0.6
+  ) +
+  geom_node_point(
+    aes(
+      color = type,
+      size = size
+    ),
+    alpha = 0.9
+  ) +
+  geom_node_text(
+    aes(label = name),
+    repel = TRUE,
+    size = 3,
+    max.overlaps = 200
+  ) +
+  scale_color_manual(
+    values = c(
+      Virus = "#D55E00",
+      Host = "#0072B2",
+      Order = "#009E73",
+      Human = "#CC79A7"
+    )
+  ) +
+  scale_size(range = c(3, 16)) +
+  theme_void() +
+  labs(
+    title = "Virus-Host-Order Association Network",
+    subtitle = "Urban bird fecal virome"
+  )
+
+print(p_host_order)
+
+ggsave(
+  file.path(output_dir, "virus_host_order_network.pdf"),
+  p_host_order,
+  width = 14,
+  height = 12
+)
+
+ggsave(
+  file.path(output_dir, "virus_host_order_network.png"),
+  p_host_order,
+  width = 14,
+  height = 12,
+  dpi = 600
+)
+
+write.table(
+  network_edges,
+  file.path(output_dir, "virus_host_order_network_edges.tsv"),
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+write.table(
+  network_nodes,
+  file.path(output_dir, "virus_host_order_network_nodes.tsv"),
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+
+heatmap_data <- df %>%
+  select(
+    qseqid,
+    `Virus family`,
+    `Virus genus`,
+    `Host class`,
+    `Host order`,
+    `Host family`,
+    `Host genus`,
+    `Host Species`
+  ) %>%
+  rename(
+    vfamily = `Virus family`,
+    vgenus = `Virus genus`,
+    class = `Host class`,
+    order = `Host order`,
+    family = `Host family`,
+    genus = `Host genus`,
+    species = `Host Species`
+  ) %>%
+  filter(
+    !is.na(vgenus),
+    vgenus != "",
+    !is.na(class),
+    class != "",
+    !is.na(species),
+    species != ""
+  ) %>%
+  distinct(
+    qseqid,
+    vfamily,
+    vgenus,
+    class,
+    order,
+    family,
+    genus,
+    species
+  )
+
+heatmap_presence <- heatmap_data %>%
+  distinct(species, vgenus) %>%
+  mutate(value = 1L)
+
+heatmap_matrix <- heatmap_presence %>%
+  pivot_wider(
+    names_from = vgenus,
+    values_from = value,
+    values_fill = 0L
+  ) %>%
+  as.data.frame()
+
+rownames(heatmap_matrix) <- heatmap_matrix$species
+heatmap_matrix$species <- NULL
+heatmap_matrix <- as.matrix(heatmap_matrix)
+
+host_taxonomy <- heatmap_data %>%
+  distinct(
+    species,
+    class,
+    order,
+    family,
+    genus
+  )
+
+host_taxonomy <- host_taxonomy[
+  match(rownames(heatmap_matrix), host_taxonomy$species),
+  ,
+  drop = FALSE
+]
+
+virus_taxonomy <- heatmap_data %>%
+  distinct(vgenus, vfamily)
+
+virus_taxonomy <- virus_taxonomy[
+  match(colnames(heatmap_matrix), virus_taxonomy$vgenus),
+  ,
+  drop = FALSE
+]
+
+heatmap_row_order <- order(
+  host_taxonomy$class,
+  host_taxonomy$order,
+  host_taxonomy$family,
+  host_taxonomy$genus,
+  host_taxonomy$species
+)
+
+heatmap_col_order <- order(
+  virus_taxonomy$vfamily,
+  virus_taxonomy$vgenus
+)
+
+heatmap_matrix <- heatmap_matrix[
+  heatmap_row_order,
+  heatmap_col_order,
+  drop = FALSE
+]
+
+host_taxonomy <- host_taxonomy[
+  heatmap_row_order,
+  ,
+  drop = FALSE
+]
+
+virus_taxonomy <- virus_taxonomy[
+  heatmap_col_order,
+  ,
+  drop = FALSE
+]
+
+host_classes <- unique(host_taxonomy$class)
+host_palette <- brewer.pal(12, "Set3")
+
+host_colors <- structure(
+  rep(host_palette, length.out = length(host_classes)),
+  names = host_classes
+)
+
+virus_families <- unique(virus_taxonomy$vfamily)
+virus_palette <- brewer.pal(9, "Pastel1")
+
+virus_colors <- structure(
+  rep(virus_palette, length.out = length(virus_families)),
+  names = virus_families
+)
+
+row_anno <- rowAnnotation(
+  Class = host_taxonomy$class,
+  col = list(Class = host_colors)
+)
+
+col_anno <- HeatmapAnnotation(
+  Family = virus_taxonomy$vfamily,
+  col = list(Family = virus_colors)
+)
+
+heat_colors <- c(
+  "0" = "white",
+  "1" = "#87CEEB"
+)
+
+ht <- Heatmap(
+  heatmap_matrix,
+  name = "Virus detected",
+  col = heat_colors,
+  left_annotation = row_anno,
+  top_annotation = col_anno,
+  row_split = host_taxonomy$class,
+  column_split = virus_taxonomy$vfamily,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  row_names_gp = grid::gpar(fontsize = 6),
+  column_names_gp = grid::gpar(fontsize = 7),
+  column_names_rot = 90
+)
+
+pdf(
+  file.path(output_dir, "virus_host_heatmap.pdf"),
+  width = 12,
+  height = 14
+)
+draw(ht)
+dev.off()
+
+png(
+  file.path(output_dir, "virus_host_heatmap.png"),
+  width = 3000,
+  height = 3500,
+  res = 400
+)
+draw(ht)
+dev.off()
+
+write.table(
+  heatmap_matrix,
+  file.path(output_dir, "virus_host_heatmap_matrix.tsv"),
+  sep = "\t",
+  quote = FALSE,
+  col.names = NA
+)
+
+
+```

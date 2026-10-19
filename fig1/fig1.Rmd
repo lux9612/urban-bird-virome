@@ -1,0 +1,640 @@
+---
+title: "Figure 1"
+output:
+  html_document:
+    toc: true
+    code_folding: show
+params:
+  run_analysis: true
+---
+
+Run `rmarkdown::render("fig1/fig1.Rmd")` from the repository root.
+Generated tables and figures are written in the corresponding panel directory.
+For a code-only HTML preview, set `params = list(run_analysis = FALSE)`.
+
+```{r setup, include=FALSE}
+figure_dir <- normalizePath(dirname(knitr::current_input(dir = TRUE)), winslash = "/")
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE,
+                      eval = params$run_analysis, error = FALSE)
+```
+
+## fig.1b_GC_content: GC content
+
+```{r setup-fig-1b-GC-content-GC-content, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.1b_GC_content"))
+```
+
+```{r fig-1b-GC-content-GC-content}
+# GC content and genome length distribution of viral sequences
+
+library(ggplot2)
+library(patchwork)
+
+# Load input data
+df <- read.table(
+  "species_votus_length_gc_clean.tsv",
+  sep = "\t",
+  header = TRUE,
+  stringsAsFactors = FALSE
+)
+
+# Colors for CheckV quality categories
+quality_colors <- c(
+  "Complete"       = "#ce9255",
+  "High-quality"   = "#efd98d",
+  "Medium-quality" = "#cfebc6",
+  "Low-quality"    = "#afd6ec",
+  "Not-determined" = "#7f7f7f"
+)
+
+# Set the order of CheckV quality categories
+df$checkv_quality <- factor(
+  df$checkv_quality,
+  levels = c(
+    "Not-determined",
+    "Low-quality",
+    "Medium-quality",
+    "High-quality",
+    "Complete"
+  )
+)
+
+# Main scatter plot
+p_main <- ggplot(
+  df,
+  aes(
+    x = Length_bp_log10,
+    y = GC_percent,
+    color = checkv_quality
+  )
+) +
+  geom_point(
+    size = 1.5,
+    alpha = 1,
+    shape = 16
+  ) +
+  scale_color_manual(values = quality_colors) +
+  labs(
+    x = "Genome length (log10 bp)",
+    y = "GC content (%)",
+    color = "CheckV quality"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "right"
+  )
+
+# Histogram of genome length
+p_top <- ggplot(
+  df,
+  aes(
+    x = Length_bp_log10,
+    fill = checkv_quality
+  )
+) +
+  geom_histogram(
+    binwidth = 0.01,
+    color = NA,
+    position = position_stack(reverse = TRUE)
+  ) +
+  scale_fill_manual(values = quality_colors) +
+  labs(y = "Count") +
+  theme_classic() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(5, 5, 0, 5)
+  )
+
+# Histogram of GC content
+p_right <- ggplot(
+  df,
+  aes(
+    x = GC_percent,
+    fill = checkv_quality
+  )
+) +
+  geom_histogram(
+    binwidth = 0.1,
+    color = NA,
+    position = position_stack(reverse = TRUE)
+  ) +
+  scale_fill_manual(values = quality_colors) +
+  coord_flip() +
+  labs(x = "Count") +
+  theme_classic() +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(5, 5, 5, 0)
+  )
+
+# Combine the plots
+left <- p_top / p_main +
+  plot_layout(heights = c(1, 4))
+
+right <- plot_spacer() / p_right +
+  plot_layout(heights = c(1, 4))
+
+final_plot <- (left | right) +
+  plot_layout(widths = c(4, 1))
+
+final_plot
+```
+
+## fig.1c_accumulation_curves: accumulation_curve_analysis
+
+```{r setup-fig-1c-accumulation-curves-accumulation-curve-analysis, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.1c_accumulation_curves"))
+```
+
+```{r fig-1c-accumulation-curves-accumulation-curve-analysis}
+# Accumulation curve analysis and stability assessment
+
+library(readr)
+library(stringr)
+library(readxl)
+library(vegan)
+library(openxlsx)
+library(parallel)
+
+seeds <- c(123, 456, 789, 2025, 2026)
+n_randomizations <- 1000L
+n_cores <- if (.Platform$OS.type == "windows") 1L else 2L
+plot_seed <- 123
+
+output_xlsx <- "accumulation_curve_stability_ge2.xlsx"
+
+run_accumulation <- function(comm, seeds, permutations = 1000L, n_cores = 2L) {
+  runs <- mclapply(
+    seeds,
+    function(s) {
+      set.seed(s)
+      specaccum(
+        comm,
+        method = "random",
+        permutations = permutations
+      )
+    },
+    mc.cores = min(n_cores, length(seeds)),
+    mc.preschedule = TRUE,
+    mc.set.seed = FALSE
+  )
+
+  failed <- vapply(runs, inherits, logical(1), what = "try-error")
+  if (any(failed)) {
+    stop("Accumulation analysis failed for seed(s): ",
+         paste(seeds[failed], collapse = ", "))
+  }
+
+  richness <- sapply(runs, function(x) x$richness)
+  if (is.null(dim(richness))) {
+    richness <- matrix(richness, ncol = length(seeds))
+  }
+
+  colnames(richness) <- paste0("Seed_", seeds)
+  n_samples <- runs[[1]]$sites
+
+  mean_richness <- rowMeans(richness)
+  sd_richness <- apply(richness, 1, sd)
+  minimum <- apply(richness, 1, min)
+  maximum <- apply(richness, 1, max)
+  range_value <- maximum - minimum
+  cv <- sd_richness / pmax(mean_richness, 1) * 100
+  relative_range <- range_value / pmax(mean_richness, 1) * 100
+
+  detail <- data.frame(
+    Number_of_samples = n_samples,
+    richness,
+    Mean_richness = mean_richness,
+    SD = sd_richness,
+    CV_percent = cv,
+    Minimum = minimum,
+    Maximum = maximum,
+    Range = range_value,
+    Relative_range_percent = relative_range,
+    check.names = FALSE
+  )
+
+  idx <- round(c(0.25, 0.50, 0.75, 1.00) * length(n_samples))
+  idx <- pmax(idx, 1)
+
+  check <- data.frame(
+    Sampling_fraction = c("25%", "50%", "75%", "100%"),
+    Number_of_samples = n_samples[idx],
+    richness[idx, , drop = FALSE],
+    Mean_richness = mean_richness[idx],
+    SD = sd_richness[idx],
+    CV_percent = cv[idx],
+    Minimum = minimum[idx],
+    Maximum = maximum[idx],
+    Range = range_value[idx],
+    Relative_range_percent = relative_range[idx],
+    check.names = FALSE
+  )
+
+  summary <- data.frame(
+    Metric = c(
+      "Number of independent random seeds",
+      "Randomizations per seed",
+      "Maximum absolute range among runs",
+      "Maximum relative range among runs (%)",
+      "Maximum CV among runs (%)",
+      "Mean CV among runs (%)"
+    ),
+    Value = c(
+      length(seeds),
+      permutations,
+      max(range_value),
+      max(relative_range),
+      max(cv),
+      mean(cv)
+    )
+  )
+
+  rm(runs, richness)
+  invisible(gc())
+
+  list(
+    detail = detail,
+    check = check,
+    summary = summary
+  )
+}
+
+add_results <- function(wb, prefix, result) {
+  addWorksheet(wb, paste0(prefix, "_Detail"))
+  writeData(wb, paste0(prefix, "_Detail"), result$detail)
+
+  addWorksheet(wb, paste0(prefix, "_Check"))
+  writeData(wb, paste0(prefix, "_Check"), result$check)
+
+  addWorksheet(wb, paste0(prefix, "_Summary"))
+  writeData(wb, paste0(prefix, "_Summary"), result$summary)
+}
+
+plot_accumulation <- function(all_result, ge2_result, file, main, ylab,
+                              all_label, ge2_label) {
+  seed_col <- paste0("Seed_", plot_seed)
+
+  pdf(file, width = 6, height = 5)
+
+  plot(
+    all_result$detail$Number_of_samples,
+    all_result$detail[[seed_col]],
+    type = "l",
+    col = "#7792c8",
+    lwd = 12,
+    xlab = "Number of samples",
+    ylab = ylab,
+    main = main
+  )
+
+  lines(
+    ge2_result$detail$Number_of_samples,
+    ge2_result$detail[[seed_col]],
+    col = "#c16e54",
+    lwd = 12
+  )
+
+  legend(
+    "bottomright",
+    legend = c(all_label, ge2_label),
+    col = c("#7792c8", "#c16e54"),
+    lwd = 3,
+    bty = "n"
+  )
+
+  dev.off()
+}
+
+build_cluster_matrix <- function(cluster_file, species_pa) {
+  x <- read_xlsx(
+    cluster_file,
+    col_names = FALSE,
+    .name_repair = "minimal"
+  )
+
+  x <- as.matrix(x)
+  x <- apply(x, 2, as.character)
+
+  representatives <- x[, 1]
+  cluster_size <- rowSums(!is.na(x) & x != "")
+
+  cluster_pa <- matrix(
+    0L,
+    nrow = length(representatives),
+    ncol = ncol(species_pa),
+    dimnames = list(representatives, colnames(species_pa))
+  )
+
+  for (i in seq_len(nrow(x))) {
+    members <- x[i, ]
+    members <- members[!is.na(members) & members != ""]
+    members <- intersect(members, rownames(species_pa))
+
+    if (length(members) == 0L) {
+      next
+    }
+
+    cluster_pa[i, colSums(species_pa[members, , drop = FALSE]) > 0] <- 1L
+  }
+
+  list(
+    all = cluster_pa,
+    ge2 = cluster_pa[cluster_size >= 2L, , drop = FALSE]
+  )
+}
+
+
+abu <- read_tsv(
+  "RPKM_allvirus_matrix_clean.tsv",
+  show_col_types = FALSE,
+  progress = FALSE
+)
+
+contigs <- abu$Contig
+abu$Contig <- NULL
+
+abu_mat <- as.matrix(abu)
+rownames(abu_mat) <- contigs
+
+pa_species <- (abu_mat > 0) * 1L
+
+rm(abu, abu_mat, contigs)
+invisible(gc())
+
+wb <- createWorkbook()
+
+
+# Species level
+
+
+species_clusters <- read_tsv(
+  "species_clusters_clean.tsv",
+  col_names = c("vOTU", "members"),
+  col_types = cols(
+    vOTU = col_character(),
+    members = col_character()
+  ),
+  show_col_types = FALSE,
+  progress = FALSE
+)
+
+species_cluster_size <- ifelse(
+  is.na(species_clusters$members) | species_clusters$members == "",
+  0L,
+  str_count(species_clusters$members, fixed(",")) + 1L
+)
+
+species_ge2_ids <- species_clusters$vOTU[species_cluster_size >= 2L]
+species_ge2_ids <- intersect(species_ge2_ids, rownames(pa_species))
+pa_species_ge2 <- pa_species[species_ge2_ids, , drop = FALSE]
+
+rm(species_clusters, species_cluster_size, species_ge2_ids)
+invisible(gc())
+
+species_all <- run_accumulation(
+  t(pa_species),
+  seeds,
+  n_randomizations,
+  n_cores
+)
+
+species_ge2 <- run_accumulation(
+  t(pa_species_ge2),
+  seeds,
+  n_randomizations,
+  n_cores
+)
+
+add_results(wb, "Species_All", species_all)
+add_results(wb, "Species_ge2", species_ge2)
+
+plot_accumulation(
+  species_all,
+  species_ge2,
+  "species_accumulation_curves_ge2_clean.pdf",
+  "Species-level accumulation curves",
+  "Accumulated vOTUs",
+  "All vOTUs",
+  "vOTUs >=2 sequences"
+)
+
+saveWorkbook(wb, output_xlsx, overwrite = TRUE)
+
+rm(pa_species_ge2, species_all, species_ge2)
+invisible(gc())
+
+
+# Genus level
+
+
+genus <- build_cluster_matrix(
+  "genus_clusters_clean.xlsx",
+  pa_species
+)
+
+genus_all <- run_accumulation(
+  t(genus$all),
+  seeds,
+  n_randomizations,
+  n_cores
+)
+
+genus_ge2 <- run_accumulation(
+  t(genus$ge2),
+  seeds,
+  n_randomizations,
+  n_cores
+)
+
+add_results(wb, "Genus_All", genus_all)
+add_results(wb, "Genus_ge2", genus_ge2)
+
+plot_accumulation(
+  genus_all,
+  genus_ge2,
+  "genus_accumulation_curves_ge2_clean.pdf",
+  "Genus-level accumulation curves",
+  "Accumulated genus vOTUs",
+  "All genus vOTUs",
+  "Genus vOTUs >=2 sequences"
+)
+
+saveWorkbook(wb, output_xlsx, overwrite = TRUE)
+
+rm(genus, genus_all, genus_ge2)
+invisible(gc())
+
+
+# Family level
+
+
+family <- build_cluster_matrix(
+  "family_clusters_clean.xlsx",
+  pa_species
+)
+
+rm(pa_species)
+invisible(gc())
+
+family_all <- run_accumulation(
+  t(family$all),
+  seeds,
+  n_randomizations,
+  n_cores
+)
+
+family_ge2 <- run_accumulation(
+  t(family$ge2),
+  seeds,
+  n_randomizations,
+  n_cores
+)
+
+add_results(wb, "Family_All", family_all)
+add_results(wb, "Family_ge2", family_ge2)
+
+plot_accumulation(
+  family_all,
+  family_ge2,
+  "family_accumulation_curves_ge2_clean.pdf",
+  "Family-level accumulation curves",
+  "Accumulated family vOTUs",
+  "All family vOTUs",
+  "Family vOTUs >=2 sequences"
+)
+
+saveWorkbook(wb, output_xlsx, overwrite = TRUE)
+
+rm(family, family_all, family_ge2)
+invisible(gc())
+
+```
+
+## fig.1d_fig_2a_viral_vOTU_richness_location_bird_order: viral_vOTU_richness_location_bird_order
+
+```{r setup-fig-1d-fig-2a-viral-vOTU-richness-location-bird-order-viral-vOTU-richness-location-bird-order, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.1d_fig_2a_viral_vOTU_richness_location_bird_order"))
+```
+
+```{r fig-1d-fig-2a-viral-vOTU-richness-location-bird-order-viral-vOTU-richness-location-bird-order}
+# Viral vOTU richness across locations and bird orders
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Input files
+
+abundance_file <- "RPKM_allvirus_percent_matrix_clean.tsv"
+location_file <- "location.xlsx"
+eukaryotic_votu_file <- "veter_otus_clean.xlsx"
+bird_file <- "bird_species.xlsx"
+
+
+abu <- read.table(
+  abundance_file,
+  sep = "\t",
+  header = TRUE,
+  check.names = FALSE
+)
+
+loc <- read_xlsx(location_file)
+euk_ids <- read_xlsx(eukaryotic_votu_file)
+bird <- read_xlsx(bird_file)
+
+# Standardize column names
+names(loc)[names(loc) == "ID"] <- "Library"
+names(euk_ids)[1] <- "Contig"
+
+# Assign missing bird orders to "Unknown"
+bird$Order[is.na(bird$Order)] <- "Unknown"
+
+
+abu_long <- abu %>%
+  pivot_longer(
+    cols = -Contig,
+    names_to = "Library",
+    values_to = "value"
+  )
+
+
+abu_loc <- abu_long %>%
+  left_join(loc, by = "Library") %>%
+  filter(!is.na(location))
+
+
+abu_pa_type <- abu_loc %>%
+  mutate(present = value > 0) %>%
+  left_join(
+    euk_ids %>%
+      mutate(Type = "Eukaryotic vOTUs"),
+    by = "Contig"
+  ) %>%
+  mutate(
+    Type = ifelse(
+      is.na(Type),
+      "Phage vOTUs",
+      Type
+    )
+  )
+
+
+votu_rich_type <- abu_pa_type %>%
+  group_by(location, Type, Contig) %>%
+  summarise(
+    any_present = any(present),
+    .groups = "drop"
+  ) %>%
+  group_by(location, Type) %>%
+  summarise(
+    votu_richness = sum(any_present),
+    .groups = "drop"
+  )
+
+# Order locations according to total vOTU richness
+votu_rich_type <- votu_rich_type %>%
+  group_by(location) %>%
+  mutate(
+    total_votus = sum(votu_richness)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    location = reorder(location, total_votus)
+  )
+
+
+p_location <- ggplot(
+  votu_rich_type,
+  aes(
+    x = location,
+    y = votu_richness,
+    fill = Type
+  )
+) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "Eukaryotic vOTUs" = "#afd6ec",
+      "Phage vOTUs" = "#94c5aa"
+    )
+  ) +
+  labs(
+    x = "Location",
+    y = "Number of detected viral vOTUs",
+    fill = "vOTU type",
+    title = "Viral vOTU richness across locations"
+  ) +
+  theme_classic(base_size = 14)
+
+p_location
+
+```

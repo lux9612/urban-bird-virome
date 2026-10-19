@@ -1,0 +1,3 @@
+Analysis,N,Cities,Test,Statistic,DF,P
+AMG detection by city,985,22,Pearson chi-square,330.33084630943415,21,2.0465497722413383e-57
+AMG abundance among positives,266,20,Kruskal-Wallis,40.1376869200285,19,0.003138798942689502

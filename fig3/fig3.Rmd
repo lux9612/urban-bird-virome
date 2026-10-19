@@ -1,0 +1,1463 @@
+---
+title: "Figure 3"
+output:
+  html_document:
+    toc: true
+    code_folding: show
+params:
+  run_analysis: true
+---
+
+Run `rmarkdown::render("fig3/fig3.Rmd")` from the repository root.
+Generated tables and figures are written in the corresponding panel directory.
+For a code-only HTML preview, set `params = list(run_analysis = FALSE)`.
+
+```{r setup, include=FALSE}
+figure_dir <- normalizePath(dirname(knitr::current_input(dir = TRUE)), winslash = "/")
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE,
+                      eval = params$run_analysis, error = FALSE)
+```
+
+## Fig. 3a
+
+Basemap: Tianditu via GeoJSON.CN, source-reported GS(2024)0650.
+Inputs: `fig3a_edges.csv`, `fig3a_metadata_matched.csv`, `china_tianditu.geojson`.
+
+```r
+options(fig3a.data_dir = "path/to/data", fig3a.output_dir = "path/to/output")
+source("fig3/panels/fig.3ab_spatial_networks/map_only/plot_fig3a_network.R")
+```
+
+## fig.3ab_spatial_networks: 1.spatial_network_analysis
+
+```{r setup-fig-3ab-spatial-networks-1-spatial-network-analysis, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.3ab_spatial_networks"))
+```
+
+```{r fig-3ab-spatial-networks-1-spatial-network-analysis}
+# Spatial vOTU similarity network
+
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(vegan)
+library(openxlsx)
+
+# Input files
+meta_file <- "metadata2.xlsx"
+abundance_file <- "RPKM_veter_percent_matrix_clean.tsv"
+
+# Fig.3a basemap: Tianditu via GeoJSON.CN; source-reported GS(2024)0650
+basemap_file <- "map_only/data/china_tianditu.geojson"
+if (!file.exists(basemap_file)) {
+  basemap_file <- "https://geojson.cn/api/tiandi/100000.json"
+}
+
+# Network settings
+top_k <- 4
+min_shared <- 30
+min_similarity <- 0.06
+
+# Permutation settings
+previous_permutations <- 499
+n_permutations <- 9999
+main_seed <- 1
+stability_seeds <- c(1, 123, 456, 2025, 2026)
+
+# Output
+output_xlsx <- "spatial_network_permutation_stability_9999.xlsx"
+output_png <- "geographical_network_9999perm_seed1.png"
+output_pdf <- "geographical_network_9999perm_seed1.pdf"
+
+
+# Map data
+crs_target <- 3857
+basemap <- st_read(basemap_file, quiet = TRUE)
+stopifnot(!is.na(st_crs(basemap)))
+basemap <- st_transform(basemap, crs_target)
+gtype <- as.character(st_geometry_type(basemap))
+province_3857 <- basemap[gtype %in% c("POLYGON", "MULTIPOLYGON"), ]
+official_lines_3857 <- basemap[gtype %in% c("LINESTRING", "MULTILINESTRING"), ]
+stopifnot(nrow(province_3857) == 34, nrow(official_lines_3857) > 0)
+map_bbox <- st_bbox(basemap)
+
+
+# Metadata and abundance matrix
+meta <- read_excel(meta_file) %>%
+  rename(SampleID = Library) %>%
+  mutate(
+    SampleID = trimws(as.character(SampleID)),
+    SampleID = gsub("Birdfe", "BirdFe", SampleID),
+    lon = as.numeric(lon),
+    lat = as.numeric(lat)
+  ) %>%
+  filter(
+    !is.na(SampleID), SampleID != "",
+    !is.na(lon), !is.na(lat)
+  ) %>%
+  mutate(
+    PointID = paste0(
+      sprintf("%.5f", lon), "_", sprintf("%.5f", lat)
+    )
+  )
+
+abundance <- read.table(
+  abundance_file,
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE
+)
+
+colnames(abundance)[1] <- "vOTU"
+colnames(abundance) <- gsub("Birdfe", "BirdFe", colnames(abundance))
+
+shared_samples <- intersect(colnames(abundance)[-1], meta$SampleID)
+if (length(shared_samples) < 3) {
+  stop("Too few matched samples. Check SampleID names.")
+}
+
+abundance <- abundance[, c("vOTU", shared_samples), drop = FALSE]
+meta_used <- meta %>% filter(SampleID %in% shared_samples)
+
+
+# Site-level presence/absence matrix
+site_votu <- abundance %>%
+  pivot_longer(
+    cols = -vOTU,
+    names_to = "SampleID",
+    values_to = "Abundance"
+  ) %>%
+  inner_join(
+    meta_used %>% select(SampleID, PointID),
+    by = "SampleID"
+  ) %>%
+  mutate(PA = as.integer(Abundance > 0)) %>%
+  group_by(PointID, vOTU) %>%
+  summarise(PA = max(PA), .groups = "drop") %>%
+  pivot_wider(
+    names_from = vOTU,
+    values_from = PA,
+    values_fill = 0
+  ) %>%
+  as.data.frame()
+
+rownames(site_votu) <- site_votu$PointID
+site_votu$PointID <- NULL
+
+X_pa <- as.matrix(site_votu)
+storage.mode(X_pa) <- "numeric"
+
+
+# Observed network
+similarity_matrix <- 1 - as.matrix(
+  vegdist(X_pa, method = "jaccard", binary = TRUE)
+)
+
+similarity_table <- as.data.frame(
+  as.table(similarity_matrix),
+  stringsAsFactors = FALSE
+) %>%
+  transmute(
+    p1 = as.character(Var1),
+    p2 = as.character(Var2),
+    similarity = as.numeric(Freq)
+  ) %>%
+  filter(p1 != p2)
+
+candidate_edges <- similarity_table %>%
+  group_by(p1) %>%
+  arrange(desc(similarity), p2) %>%
+  slice_head(n = top_k) %>%
+  ungroup() %>%
+  mutate(
+    u = pmin(p1, p2),
+    v = pmax(p1, p2)
+  ) %>%
+  distinct(u, v, .keep_all = TRUE) %>%
+  transmute(p1 = u, p2 = v, similarity = similarity)
+
+count_shared <- function(a, b, X) {
+  sum(X[a, ] == 1 & X[b, ] == 1)
+}
+
+candidate_edges$shared_vOTUs <- mapply(
+  count_shared,
+  candidate_edges$p1,
+  candidate_edges$p2,
+  MoreArgs = list(X = X_pa)
+)
+
+candidate_edges <- candidate_edges %>%
+  mutate(
+    edge_id = paste(pmin(p1, p2), pmax(p1, p2), sep = "__")
+  )
+
+
+# Null model
+upper_index <- which(upper.tri(similarity_matrix))
+
+run_permutation <- function(seed, n_perm) {
+  set.seed(seed)
+
+  null_values <- matrix(
+    NA_real_,
+    nrow = n_perm,
+    ncol = length(upper_index)
+  )
+
+  for (i in seq_len(n_perm)) {
+    X_perm <- apply(X_pa, 2, sample)
+
+    if (is.null(dim(X_perm))) {
+      X_perm <- matrix(X_perm, nrow = nrow(X_pa))
+    }
+
+    rownames(X_perm) <- rownames(X_pa)
+    colnames(X_perm) <- colnames(X_pa)
+
+    perm_similarity <- 1 - as.matrix(
+      vegdist(X_perm, method = "jaccard", binary = TRUE)
+    )
+
+    null_values[i, ] <- perm_similarity[upper_index]
+
+    if (i %% 1000 == 0 || i == n_perm) {
+    }
+  }
+
+  threshold_95 <- as.numeric(
+    quantile(null_values, 0.95, na.rm = TRUE)
+  )
+  threshold_99 <- as.numeric(
+    quantile(null_values, 0.99, na.rm = TRUE)
+  )
+
+  retained_edges <- candidate_edges %>%
+    filter(
+      similarity >= threshold_99,
+      shared_vOTUs >= min_shared,
+      similarity >= min_similarity
+    )
+
+  list(
+    seed = seed,
+    permutations = n_perm,
+    threshold_95 = threshold_95,
+    threshold_99 = threshold_99,
+    retained_edges = retained_edges
+  )
+}
+
+previous_result <- run_permutation(
+  main_seed,
+  previous_permutations
+)
+
+stability_results <- lapply(
+  stability_seeds,
+  function(seed) run_permutation(seed, n_permutations)
+)
+names(stability_results) <- paste0("seed_", stability_seeds)
+
+main_result <- stability_results[[paste0("seed_", main_seed)]]
+main_edge_ids <- sort(main_result$retained_edges$edge_id)
+
+stability_summary <- do.call(
+  rbind,
+  lapply(stability_results, function(x) {
+    ids <- sort(x$retained_edges$edge_id)
+    overlap_n <- length(intersect(ids, main_edge_ids))
+    union_n <- length(union(ids, main_edge_ids))
+
+    data.frame(
+      seed = x$seed,
+      permutations = x$permutations,
+      threshold_95 = x$threshold_95,
+      threshold_99 = x$threshold_99,
+      retained_edges = nrow(x$retained_edges),
+      overlap_with_seed1 = overlap_n,
+      edge_set_jaccard_vs_seed1 =
+        ifelse(union_n == 0, NA_real_, overlap_n / union_n),
+      exact_same_as_seed1 = identical(ids, main_edge_ids)
+    )
+  })
+)
+
+previous_ids <- sort(previous_result$retained_edges$edge_id)
+current_ids <- sort(main_result$retained_edges$edge_id)
+
+shared_edge_n <- length(intersect(previous_ids, current_ids))
+union_edge_n <- length(union(previous_ids, current_ids))
+
+previous_vs_current <- data.frame(
+  comparison = "Seed 1: 499 vs 9999 permutations",
+  previous_permutations = previous_permutations,
+  current_permutations = n_permutations,
+  previous_threshold_95 = previous_result$threshold_95,
+  current_threshold_95 = main_result$threshold_95,
+  previous_threshold_99 = previous_result$threshold_99,
+  current_threshold_99 = main_result$threshold_99,
+  previous_retained_edges = nrow(previous_result$retained_edges),
+  current_retained_edges = nrow(main_result$retained_edges),
+  shared_edges = shared_edge_n,
+  union_edges = union_edge_n,
+  edge_set_jaccard =
+    ifelse(union_edge_n == 0, NA_real_, shared_edge_n / union_edge_n),
+  exact_same_edge_set = identical(previous_ids, current_ids)
+)
+
+all_retained_ids <- sort(
+  unique(
+    unlist(
+      lapply(
+        stability_results,
+        function(x) x$retained_edges$edge_id
+      )
+    )
+  )
+)
+
+edge_stability <- candidate_edges %>%
+  filter(edge_id %in% all_retained_ids) %>%
+  select(edge_id, p1, p2, similarity, shared_vOTUs)
+
+for (seed in stability_seeds) {
+  x <- stability_results[[paste0("seed_", seed)]]
+  edge_stability[[paste0("retained_seed_", seed)]] <-
+    edge_stability$edge_id %in% x$retained_edges$edge_id
+}
+
+retained_columns <- paste0("retained_seed_", stability_seeds)
+
+edge_stability$n_runs_retained <- rowSums(
+  edge_stability[, retained_columns, drop = FALSE]
+)
+edge_stability$run_frequency <-
+  edge_stability$n_runs_retained / length(stability_seeds)
+
+edge_stability <- edge_stability %>%
+  arrange(
+    desc(n_runs_retained),
+    desc(similarity),
+    desc(shared_vOTUs)
+  )
+
+threshold_statistics <- data.frame(
+  metric = c(
+    "Mean 99th-percentile threshold",
+    "SD of 99th-percentile threshold",
+    "CV of 99th-percentile threshold (%)",
+    "Minimum 99th-percentile threshold",
+    "Maximum 99th-percentile threshold",
+    "Range of 99th-percentile threshold",
+    "Relative range of 99th-percentile threshold (%)",
+    "Minimum retained edges",
+    "Maximum retained edges"
+  ),
+  value = c(
+    mean(stability_summary$threshold_99),
+    sd(stability_summary$threshold_99),
+    100 * sd(stability_summary$threshold_99) /
+      mean(stability_summary$threshold_99),
+    min(stability_summary$threshold_99),
+    max(stability_summary$threshold_99),
+    diff(range(stability_summary$threshold_99)),
+    100 * diff(range(stability_summary$threshold_99)) /
+      mean(stability_summary$threshold_99),
+    min(stability_summary$retained_edges),
+    max(stability_summary$retained_edges)
+  )
+)
+
+parameters <- data.frame(
+  item = c(
+    "Similarity metric",
+    "Candidate-edge rule",
+    "Minimum shared vOTUs",
+    "Minimum Jaccard similarity",
+    "Previous permutations",
+    "Current permutations per run",
+    "Independent seeds",
+    "Main figure seed",
+    "Permutation structure",
+    "Preserved property",
+    "Randomized property",
+    "Null-model interpretation"
+  ),
+  value = c(
+    "Binary Jaccard similarity",
+    paste0("Top-", top_k, " similarity edges per site before deduplication"),
+    min_shared,
+    min_similarity,
+    previous_permutations,
+    n_permutations,
+    paste(stability_seeds, collapse = ", "),
+    main_seed,
+    "Each vOTU presence/absence column was independently shuffled across sampling sites",
+    "Overall site occupancy frequency of each vOTU",
+    "Identity of sampling sites at which each vOTU occurred",
+    "Observed between-site similarity compared with a null distribution retaining vOTU occupancy while randomizing geographic allocation"
+  )
+)
+
+
+# Export results
+wb <- createWorkbook()
+
+write_sheet <- function(sheet, x) {
+  addWorksheet(wb, sheet)
+  writeData(wb, sheet, x)
+  setColWidths(wb, sheet, cols = seq_len(ncol(x)), widths = "auto")
+}
+
+write_sheet("Parameters", parameters)
+write_sheet("Previous_vs_9999", previous_vs_current)
+write_sheet("Stability_Summary", stability_summary)
+write_sheet("Threshold_Stats", threshold_statistics)
+write_sheet("Edge_Stability", edge_stability)
+write_sheet("Main_Edges_Seed1", main_result$retained_edges)
+write_sheet("Previous_Edges_499", previous_result$retained_edges)
+write_sheet("Candidate_Edges", candidate_edges)
+
+saveWorkbook(wb, output_xlsx, overwrite = TRUE)
+
+
+# Network map
+significant_edges <- main_result$retained_edges
+if (nrow(significant_edges) == 0) {
+  stop("No edges retained under the 9999-permutation threshold.")
+}
+
+similarity_breaks <- unique(
+  as.numeric(
+    quantile(
+      significant_edges$similarity,
+      probs = c(0, 0.33, 0.66, 1),
+      na.rm = TRUE
+    )
+  )
+)
+
+if (length(similarity_breaks) < 4) {
+  similarity_breaks <- unique(
+    seq(
+      min(significant_edges$similarity),
+      max(significant_edges$similarity),
+      length.out = 4
+    )
+  )
+}
+
+if (length(similarity_breaks) < 2) {
+  epsilon <- 1e-8
+  similarity_breaks <- c(
+    min(significant_edges$similarity) - epsilon,
+    max(significant_edges$similarity) + epsilon
+  )
+}
+
+significant_edges <- significant_edges %>%
+  mutate(
+    similarity_group = cut(
+      similarity,
+      breaks = similarity_breaks,
+      include.lowest = TRUE,
+      dig.lab = 4
+    )
+  )
+
+base_colors <- c("#F6E8C3", "#DFC27D", "#BF812D", "#8C510A")
+n_groups <- nlevels(significant_edges$similarity_group)
+
+network_colors <- base_colors[
+  seq_len(min(n_groups, length(base_colors)))
+]
+names(network_colors) <- levels(
+  significant_edges$similarity_group
+)[seq_along(network_colors)]
+
+points <- meta_used %>%
+  group_by(PointID) %>%
+  summarise(
+    lon = mean(lon),
+    lat = mean(lat),
+    n_libraries = n(),
+    .groups = "drop"
+  )
+
+points_sf <- st_as_sf(
+  points,
+  coords = c("lon", "lat"),
+  crs = 4326
+) %>%
+  st_transform(crs_target)
+
+point_coordinates <- st_coordinates(points_sf)
+point_index <- setNames(seq_len(nrow(points)), points$PointID)
+
+bezier_line <- function(p1, p2, strength = 0.18, n = 80) {
+  v <- p2 - p1
+  d <- sqrt(sum(v^2))
+
+  if (d == 0) {
+    return(st_linestring(rbind(p1, p2)))
+  }
+
+  perpendicular <- c(-v[2], v[1]) / d
+  midpoint <- (p1 + p2) / 2
+  control <- midpoint + perpendicular * (d * strength)
+  t <- seq(0, 1, length.out = n)
+
+  xy <- cbind(
+    (1 - t)^2 * p1[1] +
+      2 * (1 - t) * t * control[1] +
+      t^2 * p2[1],
+    (1 - t)^2 * p1[2] +
+      2 * (1 - t) * t * control[2] +
+      t^2 * p2[2]
+  )
+
+  st_linestring(xy)
+}
+
+make_edge <- function(a, b) {
+  p1 <- point_coordinates[point_index[a], ]
+  p2 <- point_coordinates[point_index[b], ]
+  bezier_line(p1, p2)
+}
+
+edge_geometries <- mapply(
+  make_edge,
+  significant_edges$p1,
+  significant_edges$p2,
+  SIMPLIFY = FALSE
+)
+
+edges_sf <- st_sf(
+  similarity = significant_edges$similarity,
+  shared_vOTUs = significant_edges$shared_vOTUs,
+  similarity_group = significant_edges$similarity_group,
+  geometry = st_sfc(edge_geometries, crs = crs_target)
+)
+
+network_plot <- ggplot() +
+  geom_sf(data = province_3857, fill = NA, color = "black", linewidth = 0.35) +
+  geom_sf(data = official_lines_3857, color = "black", linewidth = 0.4) +
+  geom_sf(
+    data = edges_sf,
+    aes(
+      color = similarity_group,
+      linewidth = shared_vOTUs
+    ),
+    alpha = 0.9,
+    lineend = "round"
+  ) +
+  geom_sf(
+    data = points_sf,
+    aes(size = n_libraries),
+    shape = 21,
+    fill = "white",
+    color = "black",
+    stroke = 0.6
+  ) +
+  scale_color_manual(
+    values = network_colors,
+    name = "Jaccard similarity (vOTU)"
+  ) +
+  scale_linewidth_continuous(
+    name = "Shared vOTUs",
+    range = c(0.6, 2.2)
+  ) +
+  scale_size_continuous(
+    name = "Libraries per site",
+    range = c(2.8, 6.2)
+  ) +
+  coord_sf(
+    xlim = c(map_bbox["xmin"], map_bbox["xmax"]),
+    ylim = c(map_bbox["ymin"], map_bbox["ymax"]),
+    expand = TRUE
+  ) +
+  labs(caption = "Basemap: Tianditu via GeoJSON.CN; source-reported GS(2024)0650") +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    plot.caption = element_text(size = 7, hjust = 0)
+  ) +
+  ggtitle(
+    "Geographical network of shared avian viromes (vOTU-based)"
+  )
+
+print(network_plot)
+
+ggsave(
+  output_png,
+  plot = network_plot,
+  width = 10,
+  height = 8,
+  dpi = 600
+)
+
+ggsave(
+  output_pdf,
+  plot = network_plot,
+  width = 10,
+  height = 8
+)
+
+```
+
+## fig.3ab_spatial_networks: 2.shared_vOTU
+
+```{r setup-fig-3ab-spatial-networks-2-shared-vOTU, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.3ab_spatial_networks"))
+```
+
+```{r fig-3ab-spatial-networks-2-shared-vOTU}
+library(tidyverse)
+library(readxl)
+library(vegan)
+
+# Parameters
+
+N_PERM <- 9999
+K_NEIGHBOR <- 4
+MIN_SHARED <- 30
+MIN_SIM <- 0.06
+
+TOP_N_PARTNER <- 12
+TOP_K_PARTNER <- 6
+
+TOP_N_FAMILY <- 15
+TOP_FAM_GLOBAL <- 18
+UNIQUE_GLOBAL <- TRUE
+
+set.seed(1)
+
+
+meta <- read_excel("metadata2.xlsx") %>%
+  rename(SampleID = Library) %>%
+  mutate(
+    SampleID = trimws(as.character(SampleID)),
+    SampleID = gsub("Birdfe", "BirdFe", SampleID),
+    lon = as.numeric(lon),
+    lat = as.numeric(lat),
+    PointID = paste0(sprintf("%.5f", lon), "_", sprintf("%.5f", lat))
+  ) %>%
+  filter(
+    !is.na(SampleID),
+    SampleID != "",
+    !is.na(lon),
+    !is.na(lat)
+  )
+
+abu <- read.table(
+  "RPKM_veter_percent_matrix_clean.tsv",
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE
+)
+
+colnames(abu)[1] <- "vOTU"
+colnames(abu) <- gsub("Birdfe", "BirdFe", colnames(abu))
+
+shared_samples <- intersect(colnames(abu)[-1], meta$SampleID)
+
+if (length(shared_samples) < 3) {
+  stop("Too few matched samples. Check SampleID in metadata2.xlsx and the abundance matrix.")
+}
+
+abu2 <- abu[, c("vOTU", shared_samples), drop = FALSE]
+meta2 <- meta %>%
+  filter(SampleID %in% shared_samples)
+
+
+abu_long <- abu2 %>%
+  pivot_longer(
+    cols = -vOTU,
+    names_to = "SampleID",
+    values_to = "Abundance"
+  ) %>%
+  inner_join(
+    meta2 %>% select(SampleID, PointID),
+    by = "SampleID"
+  ) %>%
+  mutate(PA = as.integer(Abundance > 0))
+
+point_votu <- abu_long %>%
+  group_by(PointID, vOTU) %>%
+  summarise(PA = max(PA), .groups = "drop") %>%
+  pivot_wider(
+    names_from = vOTU,
+    values_from = PA,
+    values_fill = 0
+  ) %>%
+  as.data.frame()
+
+rownames(point_votu) <- point_votu$PointID
+point_votu$PointID <- NULL
+
+X_pa <- as.matrix(point_votu)
+
+
+dist_obs <- vegdist(X_pa, method = "jaccard", binary = TRUE)
+sim_mat <- 1 - as.matrix(dist_obs)
+
+sim_df <- as.data.frame(
+  as.table(sim_mat),
+  stringsAsFactors = FALSE
+) %>%
+  transmute(
+    p1 = as.character(Var1),
+    p2 = as.character(Var2),
+    sim = as.numeric(Freq)
+  ) %>%
+  filter(p1 != p2)
+
+edges0 <- sim_df %>%
+  group_by(p1) %>%
+  arrange(desc(sim), p2) %>%
+  slice_head(n = K_NEIGHBOR) %>%
+  ungroup() %>%
+  mutate(
+    u = pmin(p1, p2),
+    v = pmax(p1, p2)
+  ) %>%
+  distinct(u, v, .keep_all = TRUE) %>%
+  transmute(
+    p1 = u,
+    p2 = v,
+    sim = sim
+  )
+
+
+upper_idx <- which(upper.tri(sim_mat))
+null_vals <- matrix(
+  NA_real_,
+  nrow = N_PERM,
+  ncol = length(upper_idx)
+)
+
+for (b in seq_len(N_PERM)) {
+  X_perm <- apply(X_pa, 2, sample)
+
+  sim_perm <- 1 - as.matrix(
+    vegdist(X_perm, method = "jaccard", binary = TRUE)
+  )
+
+  null_vals[b, ] <- sim_perm[upper_idx]
+
+  if (b %% 1000 == 0) {
+  }
+}
+
+thr95 <- as.numeric(
+  quantile(null_vals, 0.95, na.rm = TRUE)
+)
+
+thr99 <- as.numeric(
+  quantile(null_vals, 0.99, na.rm = TRUE)
+)
+
+
+get_shared <- function(a, b, X) {
+  sum(X[a, ] == 1 & X[b, ] == 1)
+}
+
+edges0$shared <- mapply(
+  get_shared,
+  edges0$p1,
+  edges0$p2,
+  MoreArgs = list(X = X_pa)
+)
+
+edges_sig <- edges0 %>%
+  filter(
+    sim >= thr99,
+    shared >= MIN_SHARED,
+    sim >= MIN_SIM
+  ) %>%
+  arrange(desc(shared), desc(sim))
+
+if (nrow(edges_sig) == 0) {
+  stop("No edges passed the thresholds.")
+}
+
+write.table(
+  edges_sig,
+  "Significant_network_edges_9999.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+write.table(
+  data.frame(
+    permutations = N_PERM,
+    threshold_95 = thr95,
+    threshold_99 = thr99,
+    min_shared = MIN_SHARED,
+    min_similarity = MIN_SIM,
+    top_k_neighbor = K_NEIGHBOR
+  ),
+  "Network_null_thresholds_9999.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+
+edge_long <- bind_rows(
+  edges_sig %>%
+    transmute(
+      site = as.character(p1),
+      partner = as.character(p2),
+      shared = as.numeric(shared)
+    ),
+  edges_sig %>%
+    transmute(
+      site = as.character(p2),
+      partner = as.character(p1),
+      shared = as.numeric(shared)
+    )
+)
+
+top_sites_tbl <- edge_long %>%
+  group_by(site) %>%
+  summarise(
+    total_shared = sum(shared, na.rm = TRUE),
+    degree = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(total_shared)) %>%
+  slice_head(n = TOP_N_PARTNER)
+
+top_sites_partner <- top_sites_tbl$site
+
+partner_plot_df <- edge_long %>%
+  filter(site %in% top_sites_partner) %>%
+  group_by(site) %>%
+  arrange(desc(shared), partner) %>%
+  mutate(
+    partner_plot = if_else(
+      row_number() <= TOP_K_PARTNER,
+      partner,
+      "Others"
+    )
+  ) %>%
+  ungroup() %>%
+  group_by(site, partner_plot) %>%
+  summarise(
+    shared = sum(shared, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+site_order_partner <- partner_plot_df %>%
+  group_by(site) %>%
+  summarise(
+    total_shared = sum(shared),
+    .groups = "drop"
+  ) %>%
+  arrange(total_shared) %>%
+  pull(site)
+
+partner_plot_df <- partner_plot_df %>%
+  mutate(
+    site = factor(site, levels = site_order_partner)
+  )
+
+p_partner <- ggplot(
+  partner_plot_df,
+  aes(x = site, y = shared, fill = partner_plot)
+) +
+  geom_col(width = 0.78) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Shared vOTUs",
+    fill = "Partner site"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "right",
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 9)
+  )
+
+print(p_partner)
+
+ggsave(
+  "Top_sites_shared_vOTUs_by_partner.png",
+  p_partner,
+  width = 10,
+  height = 6.8,
+  dpi = 600
+)
+
+write.table(
+  top_sites_tbl,
+  "Top_sites_total_shared.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+write.table(
+  partner_plot_df,
+  "Top_sites_shared_vOTUs_by_partner_plotdata.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+```
+
+## fig.3ab_spatial_networks: 3.shared_unique
+
+```{r setup-fig-3ab-spatial-networks-3-shared-unique, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.3ab_spatial_networks"))
+```
+
+```{r fig-3ab-spatial-networks-3-shared-unique}
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(ggplot2)
+library(forcats)
+library(vegan)
+
+
+meta <- read_excel("metadata2.xlsx") %>%
+  rename(SampleID = Library) %>%
+  mutate(
+    SampleID = trimws(as.character(SampleID)),
+    SampleID = gsub("Birdfe", "BirdFe", SampleID),
+    lon = as.numeric(lon),
+    lat = as.numeric(lat)
+  ) %>%
+  filter(
+    !is.na(SampleID),
+    SampleID != "",
+    !is.na(lon),
+    !is.na(lat)
+  ) %>%
+  mutate(
+    PointID = paste0(
+      sprintf("%.5f", lon),
+      "_",
+      sprintf("%.5f", lat)
+    )
+  )
+
+abu <- read.table(
+  "RPKM_veter_percent_matrix_clean.tsv",
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE
+)
+
+colnames(abu)[1] <- "vOTU"
+colnames(abu) <- gsub("Birdfe", "BirdFe", colnames(abu))
+
+shared_samples <- intersect(
+  colnames(abu)[-1],
+  meta$SampleID
+)
+
+if (length(shared_samples) < 3) {
+  stop("Too few matched samples between metadata and the RPKM matrix.")
+}
+
+abu2 <- abu[
+  ,
+  c("vOTU", shared_samples),
+  drop = FALSE
+]
+
+meta2 <- meta %>%
+  filter(SampleID %in% shared_samples)
+
+abu_long <- abu2 %>%
+  pivot_longer(
+    cols = -vOTU,
+    names_to = "SampleID",
+    values_to = "Abu"
+  ) %>%
+  inner_join(
+    meta2 %>% select(SampleID, PointID),
+    by = "SampleID"
+  ) %>%
+  mutate(
+    PA = as.integer(Abu > 0)
+  )
+
+point_votu <- abu_long %>%
+  group_by(PointID, vOTU) %>%
+  summarise(
+    PA = max(PA),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = vOTU,
+    values_from = PA,
+    values_fill = 0
+  ) %>%
+  as.data.frame()
+
+rownames(point_votu) <- point_votu$PointID
+point_votu$PointID <- NULL
+
+X_pa <- as.matrix(point_votu)
+
+
+dist_obs <- vegdist(
+  X_pa,
+  method = "jaccard",
+  binary = TRUE
+)
+
+sim_mat <- 1 - as.matrix(dist_obs)
+
+K <- 4
+
+sim_df <- as.data.frame(
+  as.table(sim_mat),
+  stringsAsFactors = FALSE
+) %>%
+  transmute(
+    p1 = as.character(Var1),
+    p2 = as.character(Var2),
+    sim = as.numeric(Freq)
+  ) %>%
+  filter(p1 != p2)
+
+edges0 <- sim_df %>%
+  group_by(p1) %>%
+  arrange(desc(sim), p2) %>%
+  slice_head(n = K) %>%
+  ungroup() %>%
+  mutate(
+    u = pmin(p1, p2),
+    v = pmax(p1, p2)
+  ) %>%
+  distinct(u, v, .keep_all = TRUE) %>%
+  transmute(
+    p1 = u,
+    p2 = v,
+    sim = sim
+  )
+
+
+set.seed(1)
+
+B <- 9999
+upper_idx <- which(upper.tri(sim_mat))
+
+null_vals <- matrix(
+  NA_real_,
+  nrow = B,
+  ncol = length(upper_idx)
+)
+
+for (b in seq_len(B)) {
+
+  Xb <- apply(
+    X_pa,
+    2,
+    sample
+  )
+
+  sim_b <- 1 - as.matrix(
+    vegdist(
+      Xb,
+      method = "jaccard",
+      binary = TRUE
+    )
+  )
+
+  null_vals[b, ] <- sim_b[upper_idx]
+
+  if (b %% 1000 == 0) {
+  }
+}
+
+thr95 <- as.numeric(
+  quantile(
+    null_vals,
+    0.95,
+    na.rm = TRUE
+  )
+)
+
+thr99 <- as.numeric(
+  quantile(
+    null_vals,
+    0.99,
+    na.rm = TRUE
+  )
+)
+
+
+get_shared <- function(a, b, X) {
+  sum(
+    X[a, ] == 1 &
+      X[b, ] == 1
+  )
+}
+
+edges0$shared <- mapply(
+  get_shared,
+  edges0$p1,
+  edges0$p2,
+  MoreArgs = list(X = X_pa)
+)
+
+min_shared <- 30
+min_sim <- 0.06
+
+edges_sig <- edges0 %>%
+  filter(
+    sim >= thr99,
+    shared >= min_shared,
+    sim >= min_sim
+  )
+
+
+if (nrow(edges_sig) == 0) {
+  stop("No edges passed the specified thresholds.")
+}
+
+write.table(
+  edges_sig,
+  "significant_edges_9999.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+write.table(
+  data.frame(
+    permutations = B,
+    threshold_95 = thr95,
+    threshold_99 = thr99,
+    min_shared = min_shared,
+    min_similarity = min_sim,
+    top_k = K
+  ),
+  "network_thresholds_9999.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+rm(
+  dist_obs,
+  sim_df,
+  null_vals
+)
+
+invisible(gc())
+
+
+edge_long <- bind_rows(
+  edges_sig %>%
+    transmute(
+      site = as.character(p1),
+      partner = as.character(p2),
+      shared = as.numeric(shared)
+    ),
+  edges_sig %>%
+    transmute(
+      site = as.character(p2),
+      partner = as.character(p1),
+      shared = as.numeric(shared)
+    )
+)
+
+TOP_N_PARTNER <- 12
+TOP_K_PARTNER <- 6
+
+top_sites_tbl <- edge_long %>%
+  group_by(site) %>%
+  summarise(
+    total_shared = sum(shared, na.rm = TRUE),
+    degree = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(total_shared)) %>%
+  slice_head(n = TOP_N_PARTNER)
+
+top_sites <- top_sites_tbl$site
+
+write.table(
+  top_sites_tbl,
+  "Top_sites_total_shared_clean.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+plot_df <- edge_long %>%
+  filter(site %in% top_sites) %>%
+  group_by(site) %>%
+  arrange(desc(shared), partner) %>%
+  mutate(
+    partner2 = ifelse(
+      row_number() <= TOP_K_PARTNER,
+      partner,
+      "Others"
+    )
+  ) %>%
+  ungroup() %>%
+  group_by(site, partner2) %>%
+  summarise(
+    shared = sum(shared, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+site_order <- plot_df %>%
+  group_by(site) %>%
+  summarise(
+    total = sum(shared),
+    .groups = "drop"
+  ) %>%
+  arrange(total) %>%
+  pull(site)
+
+plot_df <- plot_df %>%
+  mutate(
+    site = factor(
+      site,
+      levels = site_order
+    )
+  )
+
+p_stack <- ggplot(
+  plot_df,
+  aes(
+    x = site,
+    y = shared,
+    fill = partner2
+  )
+) +
+  geom_col(width = 0.78) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Shared vOTUs (counts)",
+    fill = "Shared with (partner site)",
+    title = paste0(
+      "Shared vOTUs composition across top ",
+      TOP_N_PARTNER,
+      " sites"
+    ),
+    subtitle = paste0(
+      "Per site: top ",
+      TOP_K_PARTNER,
+      " partner sites shown; remaining partners merged as Others"
+    )
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    axis.text.y = element_text(size = 10)
+  )
+
+print(p_stack)
+
+ggsave(
+  "Top_sites_shared_vOTUs_stacked_by_partner_clean.pdf",
+  p_stack,
+  width = 10,
+  height = 6.8
+)
+
+write.table(
+  plot_df,
+  "Top_sites_shared_vOTUs_stacked_plotdata_clean.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(ggplot2)
+library(forcats)
+
+# Input checks
+stopifnot(exists("edges_sig"))
+stopifnot(all(c("p1","p2","shared") %in% colnames(edges_sig)))
+stopifnot(exists("X_pa"))
+stopifnot(!is.null(rownames(X_pa)))
+stopifnot(!is.null(colnames(X_pa)))
+
+TOP_N <- 15      # number of sites to display, ranked by total_shared
+TOP_K <- 99999   # use all significant neighbors by default; keep this value large to avoid limiting neighbors
+
+# Definition of unique vOTUs:
+# TRUE  = globally unique (observed at only one site across all sites)
+# FALSE = relatively unique (present minus shared; not shared with significant neighbors)
+UNIQUE_GLOBAL <- TRUE
+
+# To avoid overcrowding, retain the most abundant families globally and merge the remainder as Others
+TOP_FAM_GLOBAL <- 18
+
+tax <- read_excel("veter_votus_clean.xlsx") %>%
+  rename(vOTU = votus) %>%
+  mutate(
+    vOTU = trimws(as.character(vOTU)),
+    Family = trimws(as.character(Family))
+  ) %>%
+  filter(!is.na(vOTU), vOTU != "", !is.na(Family), Family != "")
+
+tax_map <- setNames(tax$Family, tax$vOTU)
+votu_names <- colnames(X_pa)
+
+edge_long <- bind_rows(
+  edges_sig %>% transmute(site = as.character(p1), partner = as.character(p2), shared = as.numeric(shared)),
+  edges_sig %>% transmute(site = as.character(p2), partner = as.character(p1), shared = as.numeric(shared))
+)
+
+top_sites <- edge_long %>%
+  group_by(site) %>%
+  summarise(total_shared = sum(shared, na.rm = TRUE), degree = n(), .groups = "drop") %>%
+  arrange(desc(total_shared)) %>%
+  slice_head(n = TOP_N) %>%
+  pull(site)
+
+present_idx <- lapply(rownames(X_pa), function(s) which(X_pa[s, ] == 1))
+names(present_idx) <- rownames(X_pa)
+
+get_shared_votus_vec <- function(a, b) {
+  ia <- present_idx[[a]]
+  ib <- present_idx[[b]]
+  if (length(ia) == 0 || length(ib) == 0) return(character(0))
+  votu_names[intersect(ia, ib)]
+}
+
+site_shared <- vector("list", length(top_sites))
+names(site_shared) <- top_sites
+
+for (s in top_sites) {
+  nb_tbl <- edge_long %>%
+    filter(site == s) %>%
+    arrange(desc(shared)) %>%
+    slice_head(n = TOP_K)
+  
+  nb <- nb_tbl$partner
+  if (length(nb) == 0) {
+    site_shared[[s]] <- character(0)
+  } else {
+    site_shared[[s]] <- unique(unlist(lapply(nb, function(x) get_shared_votus_vec(s, x)), use.names = FALSE))
+  }
+}
+
+site_unique <- vector("list", length(top_sites))
+names(site_unique) <- top_sites
+
+if (UNIQUE_GLOBAL) {
+  # Globally unique: the vOTU occurs at only one site across all sites
+  col_occ <- colSums(X_pa == 1, na.rm = TRUE)  # number of sites in which each vOTU occurs
+  for (s in top_sites) {
+    idx_s <- present_idx[[s]]
+    if (length(idx_s) == 0) {
+      site_unique[[s]] <- character(0)
+    } else {
+      v_s <- votu_names[idx_s]
+      site_unique[[s]] <- v_s[col_occ[v_s] == 1]
+    }
+  }
+} else {
+  # Relatively unique: present minus shared (not shared with significant neighbors)
+  for (s in top_sites) {
+    idx_s <- present_idx[[s]]
+    v_s <- if (length(idx_s) == 0) character(0) else votu_names[idx_s]
+    site_unique[[s]] <- setdiff(v_s, site_shared[[s]])
+  }
+}
+
+count_family <- function(vv) {
+  if (length(vv) == 0) return(tibble(Family = "None", n_vOTU = 0))
+  fam <- unname(tax_map[vv])
+  fam <- fam[!is.na(fam)]
+  if (length(fam) == 0) return(tibble(Family = "Unclassified", n_vOTU = length(vv)))
+  tibble(Family = fam) %>% count(Family, name = "n_vOTU")
+}
+
+df_shared <- bind_rows(lapply(names(site_shared), function(s) {
+  count_family(site_shared[[s]]) %>% mutate(site = s, Type = "Shared")
+}))
+
+df_unique <- bind_rows(lapply(names(site_unique), function(s) {
+  count_family(site_unique[[s]]) %>% mutate(site = s, Type = "Unique")
+}))
+
+df_fam <- bind_rows(df_shared, df_unique)
+
+write.table(df_fam, "Site_shared_unique_vOTU_family_counts.tsv",
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+top_fams <- df_fam %>%
+  filter(Family != "None") %>%
+  group_by(Family) %>%
+  summarise(total = sum(n_vOTU), .groups = "drop") %>%
+  arrange(desc(total)) %>%
+  slice_head(n = TOP_FAM_GLOBAL) %>%
+  pull(Family)
+
+plot_df <- df_fam %>%
+  mutate(Family2 = ifelse(Family %in% top_fams, Family, "Others")) %>%
+  group_by(site, Type, Family2) %>%
+  summarise(n_vOTU = sum(n_vOTU), .groups = "drop")
+
+# Order families within each panel by n_vOTU
+plot_df <- plot_df %>%
+  group_by(site, Type) %>%
+  mutate(Family2 = fct_reorder(Family2, n_vOTU, .desc = TRUE)) %>%
+  ungroup()
+
+# Order sites by total shared vOTUs
+site_order <- plot_df %>%
+  group_by(site, Type) %>%
+  summarise(total = sum(n_vOTU), .groups = "drop") %>%
+  filter(Type == "Shared") %>%
+  arrange(desc(total)) %>%
+  pull(site)
+
+plot_df$site <- factor(plot_df$site, levels = rev(site_order))  # reverse order for facet display
+
+p <- ggplot(plot_df, aes(x = Family2, y = n_vOTU)) +
+  geom_col(width = 0.82) +
+  facet_wrap(vars(site, Type), ncol = 5, scales = "free_y") +
+  labs(
+    x = NULL,
+    y = "Number of vOTUs",
+    title = "Family composition of shared vs unique vOTUs per site",
+    subtitle = paste0(
+      "Shared = union of vOTUs shared with significant neighbors (edges_sig); ",
+      ifelse(UNIQUE_GLOBAL,
+             "Unique = vOTUs observed only at this site across all sites",
+             "Unique = present vOTUs minus shared vOTUs (relative to significant neighbors)"),
+      "; Top ", TOP_FAM_GLOBAL, " families shown, others merged as 'Others'."
+    )
+  ) +
+  theme_classic(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1, size = 7),
+    strip.text = element_text(face = "bold", size = 9)
+  )
+
+print(p)
+ggsave("Site_shared_vs_unique_vOTU_family_facets.pdf", p, width = 14, height = 8)
+
+```

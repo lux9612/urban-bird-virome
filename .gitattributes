@@ -1,0 +1,19 @@
+* text=auto
+*.fa -text
+*.tsv -text
+*.csv -text
+*.pdf binary
+fig7/data/*.csv text eol=lf
+"data/34875_phages_votus.fa" filter=lfs diff=lfs merge=lfs -text
+"data/RPKM_allvirus_matrix_clean.tsv" filter=lfs diff=lfs merge=lfs -text
+"data/RPKM_allvirus_percent_matrix_clean.tsv" filter=lfs diff=lfs merge=lfs -text
+"fig1/panels/fig.1c_accumulation_curves/family_clusters_clean.xlsx" filter=lfs diff=lfs merge=lfs -text
+"fig1/panels/fig.1c_accumulation_curves/genus_clusters_clean.xlsx" filter=lfs diff=lfs merge=lfs -text
+"fig1/panels/fig.1c_accumulation_curves/RPKM_allvirus_matrix_clean.tsv" filter=lfs diff=lfs merge=lfs -text
+"fig1/panels/fig.1c_accumulation_curves/species_clusters_clean.tsv" filter=lfs diff=lfs merge=lfs -text
+"fig1/panels/fig.1d_fig_2a_viral_vOTU_richness_location_bird_order/RPKM_allvirus_percent_matrix_clean.tsv" filter=lfs diff=lfs merge=lfs -text
+"fig2/panels/fig.1d_fig_2a_viral_vOTU_richness_location_bird_order/RPKM_allvirus_percent_matrix_clean.tsv" filter=lfs diff=lfs merge=lfs -text
+"supplementary/city_standardization/family_clusters_clean.xlsx" filter=lfs diff=lfs merge=lfs -text
+"supplementary/city_standardization/genus_clusters_clean.xlsx" filter=lfs diff=lfs merge=lfs -text
+"supplementary/city_standardization/RPKM_allvirus_matrix_clean.tsv" filter=lfs diff=lfs merge=lfs -text
+"supplementary/city_standardization/species_clusters_clean.tsv" filter=lfs diff=lfs merge=lfs -text
