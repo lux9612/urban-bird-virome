@@ -1,0 +1,989 @@
+---
+title: "Figure 2"
+output:
+  html_document:
+    toc: true
+    code_folding: show
+params:
+  run_analysis: true
+---
+
+Run `rmarkdown::render("fig2/fig2.Rmd")` from the repository root.
+Generated tables and figures are written in the corresponding panel directory.
+For a code-only HTML preview, set `params = list(run_analysis = FALSE)`.
+
+```{r setup, include=FALSE}
+figure_dir <- normalizePath(dirname(knitr::current_input(dir = TRUE)), winslash = "/")
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE,
+                      eval = params$run_analysis, error = FALSE)
+```
+
+## fig.1d_fig_2a_viral_vOTU_richness_location_bird_order: viral_vOTU_richness_location_bird_order
+
+```{r setup-fig-1d-fig-2a-viral-vOTU-richness-location-bird-order-viral-vOTU-richness-location-bird-order, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.1d_fig_2a_viral_vOTU_richness_location_bird_order"))
+```
+
+```{r fig-1d-fig-2a-viral-vOTU-richness-location-bird-order-viral-vOTU-richness-location-bird-order}
+# Viral vOTU richness across locations and bird orders
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Input files
+
+abundance_file <- "RPKM_allvirus_percent_matrix_clean.tsv"
+location_file <- "location.xlsx"
+eukaryotic_votu_file <- "veter_otus_clean.xlsx"
+bird_file <- "bird_species.xlsx"
+
+
+abu <- read.table(
+  abundance_file,
+  sep = "\t",
+  header = TRUE,
+  check.names = FALSE
+)
+
+loc <- read_xlsx(location_file)
+euk_ids <- read_xlsx(eukaryotic_votu_file)
+bird <- read_xlsx(bird_file)
+
+# Standardize column names
+names(loc)[names(loc) == "ID"] <- "Library"
+names(euk_ids)[1] <- "Contig"
+
+# Assign missing bird orders to "Unknown"
+bird$Order[is.na(bird$Order)] <- "Unknown"
+
+
+abu_long <- abu %>%
+  pivot_longer(
+    cols = -Contig,
+    names_to = "Library",
+    values_to = "value"
+  )
+
+
+abu_meta <- abu_long %>%
+  left_join(loc, by = "Library") %>%
+  left_join(bird, by = "Library") %>%
+  filter(!is.na(location))
+
+
+abu_pa <- abu_meta %>%
+  mutate(
+    present = value > 0
+  )
+
+
+combo_votu <- abu_pa %>%
+  group_by(location, Order, Contig) %>%
+  summarise(
+    any_present = any(present),
+    .groups = "drop"
+  )
+
+
+votu_rich_combo <- combo_votu %>%
+  group_by(location, Order) %>%
+  summarise(
+    votu_richness = sum(any_present),
+    .groups = "drop"
+  )
+
+
+sample_n_combo <- abu_meta %>%
+  group_by(location, Order) %>%
+  summarise(
+    n_samples = n_distinct(Library),
+    .groups = "drop"
+  )
+
+# Combine vOTU richness and sample size
+div_combo <- votu_rich_combo %>%
+  left_join(
+    sample_n_combo,
+    by = c("location", "Order")
+  )
+
+
+p_bird_order <- ggplot(
+  div_combo,
+  aes(
+    x = location,
+    y = Order
+  )
+) +
+  geom_point(
+    aes(
+      size = votu_richness,
+      fill = n_samples
+    ),
+    shape = 21,
+    color = "black",
+    alpha = 0.8
+  ) +
+  scale_size_continuous(
+    name = "vOTU richness"
+  ) +
+  scale_fill_gradient(
+    name = "Sample size",
+    low = "lightblue",
+    high = "darkblue"
+  ) +
+  coord_flip() +
+  labs(
+    x = "Location",
+    y = "Bird order",
+    title = "Viral vOTU richness by location and bird order"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    )
+  )
+
+p_bird_order
+```
+
+## fig.2b_heatmap: heatmap
+
+```{r setup-fig-2b-heatmap-heatmap, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.2b_heatmap"))
+```
+
+```{r fig-2b-heatmap-heatmap}
+# Vertebrate-associated viral family heatmap
+
+library(readxl)
+library(dplyr)
+library(pheatmap)
+
+# Input files
+abundance_file <- "RPKM_veter_percent_matrix_clean.tsv"
+taxonomy_file <- "taxonomy.xlsx"
+location_file <- "location.xlsx"
+
+
+vmat <- read.table(
+  abundance_file,
+  sep = "\t",
+  header = TRUE,
+  check.names = FALSE
+)
+
+tax <- read_xlsx(taxonomy_file)
+loc <- read_xlsx(location_file)
+
+# Standardize the location column name
+names(loc)[names(loc) == "Location"] <- "location"
+
+
+vmat2 <- vmat %>%
+  left_join(tax, by = c("Contig" = "ID")) %>%
+  filter(!is.na(Family))
+
+
+family_mat <- vmat2 %>%
+  group_by(Family) %>%
+  summarise(
+    across(where(is.numeric), sum),
+    .groups = "drop"
+  ) %>%
+  as.data.frame()
+
+rownames(family_mat) <- family_mat$Family
+
+family_mat <- family_mat[
+  , names(family_mat) != "Family",
+  drop = FALSE
+]
+
+
+heatmat <- log10(family_mat + 1)
+
+
+sample_ids <- colnames(heatmat)
+
+ann_col <- data.frame(
+  ID = sample_ids,
+  stringsAsFactors = FALSE
+) %>%
+  left_join(loc, by = "ID")
+
+annotation_col <- data.frame(
+  Location = ann_col$location
+)
+
+rownames(annotation_col) <- ann_col$ID
+
+
+location_order <- c(
+  "Aral, Xinjiang",
+  "Beijing",
+  "Chengdu, Sichuan",
+  "Chifeng, Inner Mongolia",
+  "Chongqing",
+  "Guangzhou, Guangdong",
+  "Haikou, Hainan",
+  "Harbin, Heilongjiang",
+  "Yining, Xinjiang",
+  "Lanzhou, Gansu",
+  "Nanjing, Jiangsu",
+  "Nyingchi, Tibet",
+  "Xining, Qinghai",
+  "Shanghai",
+  "Tai'an, Shandong",
+  "Ürümqi, Xinjiang",
+  "Wuhan, Hubei",
+  "Xi'an, Shaanxi",
+  "Xianyang, Shaanxi",
+  "Yinchuan, Ningxia",
+  "Zhengzhou, Henan",
+  "Zhenjiang, Jiangsu"
+)
+
+annotation_col$Location <- factor(
+  annotation_col$Location,
+  levels = location_order
+)
+
+
+ord <- order(
+  annotation_col$Location,
+  rownames(annotation_col)
+)
+
+heatmat_ord <- heatmat[
+  , ord,
+  drop = FALSE
+]
+
+annotation_col_ord <- annotation_col[
+  ord,
+  ,
+  drop = FALSE
+]
+
+
+pheatmap(
+  heatmat_ord,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  scale = "none",
+  color = colorRampPalette(
+    c("white", "deepskyblue", "lightsalmon")
+  )(100),
+  border_color = NA,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  fontsize_row = 9,
+  fontsize_col = 6,
+  annotation_col = annotation_col_ord,
+  main = "Vertebrate-associated viral families (log10 RPKM + 1)"
+)
+```
+
+## fig.2c_bird_order_virome_similarity_analysis: bird_order_virome_similarity_analysis
+
+```{r setup-fig-2c-bird-order-virome-similarity-analysis-bird-order-virome-similarity-analysis, include=FALSE}
+knitr::opts_knit$set(root.dir = file.path(figure_dir, "panels/fig.2c_bird_order_virome_similarity_analysis"))
+```
+
+```{r fig-2c-bird-order-virome-similarity-analysis-bird-order-virome-similarity-analysis}
+# Bird order virome similarity analysis
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(vegan)
+library(pheatmap)
+library(ggplot2)
+library(tibble)
+library(purrr)
+library(cowplot)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(ggrepel)
+library(scales)
+
+# Input files
+
+metadata_file <- "metadata.xlsx"
+abundance_file <- "RPKM_veter_percent_matrix_clean.tsv"
+taxonomy_file <- "veter_votus_clean.xlsx"
+
+
+meta <- read_excel(metadata_file) %>%
+  rename(
+    SampleID = Library,
+    BirdOrder = Order
+  ) %>%
+  mutate(
+    SampleID = trimws(as.character(SampleID)),
+    BirdOrder = trimws(as.character(BirdOrder)),
+    SampleID = gsub("Birdfe", "BirdFe", SampleID)
+  ) %>%
+  filter(
+    !is.na(SampleID),
+    SampleID != "",
+    !is.na(BirdOrder),
+    BirdOrder != ""
+  )
+
+
+abu <- read.table(
+  abundance_file,
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE
+)
+
+colnames(abu)[1] <- "vOTU"
+
+# Standardize sample IDs
+colnames(abu) <- gsub(
+  "Birdfe",
+  "BirdFe",
+  colnames(abu)
+)
+
+
+samples_in_abu <- colnames(abu)[-1]
+samples_in_meta <- meta$SampleID
+
+shared_samples <- intersect(
+  samples_in_abu,
+  samples_in_meta
+)
+
+abu2 <- abu[
+  ,
+  c("vOTU", shared_samples),
+  drop = FALSE
+]
+
+meta2 <- meta %>%
+  filter(
+    SampleID %in% shared_samples
+  )
+
+
+tax <- read_excel(taxonomy_file) %>%
+  rename(
+    vOTU = votus
+  ) %>%
+  mutate(
+    vOTU = trimws(as.character(vOTU)),
+    Family = trimws(as.character(Family))
+  ) %>%
+  filter(
+    !is.na(vOTU),
+    vOTU != "",
+    !is.na(Family),
+    Family != ""
+  )
+
+
+abu_fam_long <- abu2 %>%
+  left_join(
+    tax,
+    by = "vOTU"
+  ) %>%
+  filter(
+    !is.na(Family)
+  ) %>%
+  pivot_longer(
+    cols = -c(vOTU, Family),
+    names_to = "SampleID",
+    values_to = "Abundance"
+  ) %>%
+  group_by(
+    Family,
+    SampleID
+  ) %>%
+  summarise(
+    Abundance = sum(
+      Abundance,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+# Convert to a Sample x Family matrix
+fam_sample <- abu_fam_long %>%
+  pivot_wider(
+    names_from = Family,
+    values_from = Abundance,
+    values_fill = 0
+  )
+
+
+fam_sample2 <- fam_sample %>%
+  left_join(
+    meta2,
+    by = "SampleID"
+  )
+
+
+order_counts <- meta2 %>%
+  count(
+    BirdOrder,
+    sort = TRUE
+  )
+
+keep_orders <- order_counts %>%
+  filter(
+    n > 10
+  ) %>%
+  pull(
+    BirdOrder
+  )
+
+
+order_centroid <- fam_sample2 %>%
+  filter(
+    BirdOrder %in% keep_orders
+  ) %>%
+  group_by(
+    BirdOrder
+  ) %>%
+  summarise(
+    across(
+      where(is.numeric),
+      ~ mean(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  )
+
+order_mat <- as.data.frame(
+  order_centroid
+)
+
+rownames(order_mat) <- order_mat$BirdOrder
+order_mat$BirdOrder <- NULL
+
+
+dist_bc <- vegdist(
+  order_mat,
+  method = "bray"
+)
+
+sim_mat <- 1 - as.matrix(
+  dist_bc
+)
+
+
+pheatmap(
+  sim_mat,
+  color = colorRampPalette(
+    c(
+      "#81c1e8",
+      "#e6e6e6",
+      "#dc9c7b"
+    )
+  )(100),
+  clustering_method = "ward.D2",
+  border_color = NA,
+  main = "Bird order virome similarity (1 - Bray-Curtis)"
+)
+
+
+order_long <- order_mat %>%
+  rownames_to_column(
+    "BirdOrder"
+  ) %>%
+  pivot_longer(
+    cols = -BirdOrder,
+    names_to = "Family",
+    values_to = "Percent"
+  )
+
+
+plot_pair_stacked_top5 <- function(
+    orderA,
+    orderB,
+    sim_value,
+    top_k = 5,
+    show_legend = FALSE
+) {
+  
+  df_pair <- order_long %>%
+    filter(
+      BirdOrder %in% c(
+        orderA,
+        orderB
+      )
+    )
+  
+  top_fams <- df_pair %>%
+    group_by(
+      Family
+    ) %>%
+    summarise(
+      rank_value = max(
+        Percent,
+        na.rm = TRUE
+      ),
+      .groups = "drop"
+    ) %>%
+    arrange(
+      desc(rank_value)
+    ) %>%
+    slice_head(
+      n = top_k
+    ) %>%
+    pull(
+      Family
+    )
+  
+  df_plot <- df_pair %>%
+    mutate(
+      Family_group = ifelse(
+        Family %in% top_fams,
+        Family,
+        "Other"
+      )
+    ) %>%
+    group_by(
+      BirdOrder,
+      Family_group
+    ) %>%
+    summarise(
+      Percent = sum(
+        Percent,
+        na.rm = TRUE
+      ),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      BirdOrder = factor(
+        BirdOrder,
+        levels = c(
+          orderA,
+          orderB
+        )
+      ),
+      Family_group = factor(
+        Family_group,
+        levels = c(
+          top_fams,
+          "Other"
+        )
+      )
+    )
+  
+  ggplot(
+    df_plot,
+    aes(
+      x = BirdOrder,
+      y = Percent,
+      fill = Family_group
+    )
+  ) +
+    geom_col(
+      width = 0.7
+    ) +
+    theme_classic(
+      base_size = 10
+    ) +
+    theme(
+      legend.position = if (
+        show_legend
+      ) "bottom" else "none",
+      plot.title = element_text(
+        size = 10,
+        face = "bold"
+      ),
+      plot.subtitle = element_text(
+        size = 9
+      ),
+      axis.title.y = element_text(
+        size = 9
+      )
+    ) +
+    labs(
+      x = NULL,
+      y = "Mean abundance (%)",
+      fill = "Viral family",
+      title = paste0(
+        orderA,
+        " vs ",
+        orderB
+      ),
+      subtitle = paste0(
+        "Similarity = ",
+        round(
+          sim_value,
+          3
+        )
+      )
+    ) +
+    scale_y_continuous(
+      expand = expansion(
+        mult = c(
+          0,
+          0.05
+        )
+      )
+    )
+}
+
+
+pairs_all <- as.data.frame(
+  sim_mat
+) %>%
+  rownames_to_column(
+    "Order1"
+  ) %>%
+  pivot_longer(
+    cols = -Order1,
+    names_to = "Order2",
+    values_to = "Similarity"
+  ) %>%
+  filter(
+    Order1 < Order2
+  )
+
+
+N <- 5
+
+top_pairs <- pairs_all %>%
+  arrange(
+    desc(Similarity)
+  ) %>%
+  slice_head(
+    n = N
+  )
+
+bottom_pairs <- pairs_all %>%
+  arrange(
+    Similarity
+  ) %>%
+  slice_head(
+    n = N
+  )
+
+
+plots_top <- pmap(
+  top_pairs,
+  function(
+    Order1,
+    Order2,
+    Similarity
+  ) {
+    
+    plot_pair_stacked_top5(
+      Order1,
+      Order2,
+      Similarity,
+      top_k = 5,
+      show_legend = FALSE
+    )
+  }
+)
+
+plots_bottom <- pmap(
+  bottom_pairs,
+  function(
+    Order1,
+    Order2,
+    Similarity
+  ) {
+    
+    plot_pair_stacked_top5(
+      Order1,
+      Order2,
+      Similarity,
+      top_k = 5,
+      show_legend = FALSE
+    )
+  }
+)
+
+plots_10 <- c(
+  plots_top,
+  plots_bottom
+)
+
+
+grid_panels <- cowplot::plot_grid(
+  plotlist = plots_10,
+  ncol = 5,
+  nrow = 2,
+  align = "hv"
+)
+
+title_grob <- cowplot::ggdraw() +
+  cowplot::draw_label(
+    "Viral family composition of representative bird order pairs",
+    fontface = "bold",
+    size = 14,
+    x = 0,
+    hjust = 0
+  ) +
+  cowplot::draw_label(
+    "Top row: five most similar pairs; Bottom row: five most dissimilar pairs",
+    size = 11,
+    x = 0,
+    y = 0.55,
+    hjust = 0
+  )
+
+fig_pairwise <- cowplot::plot_grid(
+  title_grob,
+  grid_panels,
+  ncol = 1,
+  rel_heights = c(
+    0.12,
+    1
+  )
+)
+
+fig_pairwise
+
+
+node_df <- order_counts %>%
+  filter(
+    BirdOrder %in% keep_orders
+  ) %>%
+  transmute(
+    name = BirdOrder,
+    n_samples = n
+  )
+
+ord <- node_df$name
+
+sim_use <- sim_mat[
+  ord,
+  ord,
+  drop = FALSE
+]
+
+
+edges_all <- as.data.frame(
+  sim_use
+) %>%
+  rownames_to_column(
+    "from"
+  ) %>%
+  pivot_longer(
+    cols = -from,
+    names_to = "to",
+    values_to = "weight"
+  ) %>%
+  filter(
+    from < to
+  )
+
+
+thr <- as.numeric(
+  quantile(
+    edges_all$weight,
+    probs = 0.75,
+    na.rm = TRUE
+  )
+)
+
+edges_keep <- edges_all %>%
+  filter(
+    weight >= thr
+  )
+
+
+g_thr <- graph_from_data_frame(
+  edges_keep,
+  directed = FALSE,
+  vertices = node_df
+)
+
+g_full <- graph_from_data_frame(
+  edges_all,
+  directed = FALSE,
+  vertices = node_df
+)
+
+
+mst_g <- mst(
+  g_full,
+  weights = -E(g_full)$weight
+)
+
+# Combine high-similarity edges with the maximum
+# spanning tree to maintain network connectivity
+g <- igraph::union(
+  g_thr,
+  mst_g
+)
+
+
+edge_key <- edges_all %>%
+  mutate(
+    key = paste(
+      pmin(
+        from,
+        to
+      ),
+      pmax(
+        from,
+        to
+      ),
+      sep = "__"
+    )
+  ) %>%
+  select(
+    key,
+    weight
+  )
+
+edge_ends <- ends(
+  g,
+  E(g)
+)
+
+E(g)$key <- paste(
+  pmin(
+    edge_ends[, 1],
+    edge_ends[, 2]
+  ),
+  pmax(
+    edge_ends[, 1],
+    edge_ends[, 2]
+  ),
+  sep = "__"
+)
+
+E(g)$weight <- edge_key$weight[
+  match(
+    E(g)$key,
+    edge_key$key
+  )
+]
+
+
+name_to_n <- setNames(
+  node_df$n_samples,
+  node_df$name
+)
+
+V(g)$n_samples <- unname(
+  name_to_n[
+    V(g)$name
+  ]
+)
+
+
+weight_range <- range(
+  edges_all$weight,
+  na.rm = TRUE
+)
+
+sample_range <- range(
+  node_df$n_samples,
+  na.rm = TRUE
+)
+
+weight_breaks <- round(
+  pretty(
+    weight_range,
+    n = 4
+  ),
+  2
+)
+
+weight_breaks <- weight_breaks[
+  weight_breaks >= weight_range[1] &
+    weight_breaks <= weight_range[2]
+]
+
+sample_breaks <- pretty(
+  sample_range,
+  n = 4
+)
+
+
+tg <- as_tbl_graph(
+  g
+)
+
+set.seed(123)
+
+p_network <- ggraph(
+  tg,
+  layout = "fr"
+) +
+  geom_edge_link(
+    aes(
+      width = weight,
+      colour = weight
+    ),
+    alpha = 0.85,
+    lineend = "round"
+  ) +
+  scale_edge_width(
+    range = c(
+      0.3,
+      3.2
+    ),
+    breaks = weight_breaks,
+    name = "Similarity\n(1 - Bray-Curtis)"
+  ) +
+  scale_edge_colour_gradient(
+    low = "grey80",
+    high = "#b2182b",
+    breaks = weight_breaks,
+    name = "Similarity\n(1 - Bray-Curtis)"
+  ) +
+  geom_node_point(
+    aes(
+      size = n_samples
+    ),
+    shape = 21,
+    fill = "white",
+    colour = "black",
+    stroke = 0.6
+  ) +
+  scale_size_area(
+    max_size = 10,
+    breaks = sample_breaks,
+    name = "Samples\n(n)"
+  ) +
+  geom_node_text(
+    aes(
+      label = name
+    ),
+    repel = TRUE,
+    size = 3.2
+  ) +
+  labs(
+    title = "Network of vertebrate-associated virome similarity across bird orders",
+    subtitle = paste0(
+      "Edges shown: similarity >= ",
+      round(
+        thr,
+        3
+      ),
+      " (top 25%) + maximum spanning tree"
+    )
+  ) +
+  theme_void(
+    base_size = 11
+  ) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(
+      face = "bold"
+    ),
+    plot.subtitle = element_text(
+      size = 10
+    )
+  )
+
+p_network
+```

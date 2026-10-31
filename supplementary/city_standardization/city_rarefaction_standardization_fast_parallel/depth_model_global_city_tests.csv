@@ -1,0 +1,13 @@
+"Model","theta","Resid. df","   2 x log-lik.","Test","   df","LR stat.","Pr(Chi)","Level","Set","Group","Selected_Host_order","Global_city_P_BH"
+"1",1.28187950149961,542,-6200.38623571013,"",,,,"Species","All","All vOTUs","Passeriformes",
+"2",1.89081745952409,523,-5955.79046321201,"1 vs 2",19,244.595772498123,0,"Species","All","All vOTUs","Passeriformes",0
+"1",1.14139650701763,542,-5637.02910497893,"",,,,"Species","GE2","vOTUs represented by >=2 sequences","Passeriformes",
+"2",1.80416800306555,523,-5353.97636231153,"1 vs 2",19,283.052742667401,0,"Species","GE2","vOTUs represented by >=2 sequences","Passeriformes",0
+"1",1.64823064117986,542,-5330.76437262802,"",,,,"Genus","All","All genera","Passeriformes",
+"2",2.26786480596035,523,-5145.12079303165,"1 vs 2",19,185.643579596367,0,"Genus","All","All genera","Passeriformes",0
+"1",1.55754513107446,542,-4969.11666875125,"",,,,"Genus","GE2","Genera represented by >=2 vOTUs","Passeriformes",
+"2",2.3485094574659,523,-4742.62008820988,"1 vs 2",19,226.49658054137,0,"Genus","GE2","Genera represented by >=2 vOTUs","Passeriformes",0
+"1",1.77568448763949,542,-4386.42034432256,"",,,,"Family","All","All families","Passeriformes",
+"2",2.30353310848828,523,-4250.16511828008,"1 vs 2",19,136.255226042485,0,"Family","All","All families","Passeriformes",0
+"1",1.91970307130143,542,-4006.63558527292,"",,,,"Family","GE2","Families represented by >=2 vOTUs","Passeriformes",
+"2",2.67317264198428,523,-3850.25604768723,"1 vs 2",19,156.37953758568,0,"Family","GE2","Families represented by >=2 vOTUs","Passeriformes",0

@@ -1,0 +1,48 @@
+---
+title: "Figure 5"
+output:
+  html_document:
+    toc: true
+    code_folding: show
+params:
+  run_analysis: true
+---
+
+Run `rmarkdown::render("fig5/fig5.Rmd")` from the repository root.
+
+This document runs both components of Figure 5: the virus-host overview
+(original Figure 5) and the cross-host association analysis (original Figure 6).
+
+```{r setup, include=FALSE}
+figure_dir <- normalizePath(dirname(knitr::current_input(dir = TRUE)), winslash = "/")
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE,
+                      eval = params$run_analysis, error = FALSE)
+
+run_panel <- function(panel_dir, script_name) {
+  old_dir <- setwd(file.path(figure_dir, "panels", panel_dir))
+  on.exit(setwd(old_dir), add = TRUE)
+  source(script_name, echo = TRUE, chdir = FALSE)
+}
+```
+
+## Figure 5A: virus-host overview
+
+```{r figure-5a}
+run_panel(
+  "fig.5a_virus_host_overview",
+  "figure5a_virus_host_overview.R"
+)
+```
+
+## Figure 5B: cross-host associations
+
+```{r figure-5b}
+run_panel(
+  "fig.5b_cross_host_associations",
+  "figure5b_cross_host_associations.R"
+)
+```
+
+```{r session-info}
+sessionInfo()
+```
